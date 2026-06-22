@@ -3,12 +3,10 @@
   "version": "0.1.0",
   "identifier": "com.tauri-template.app",
   "build": {
-    "frontendDist": "../frontend/dist",
+    "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev",
-    "beforeDevCommandArg": [],
-    "beforeBuildCommand": "npm run build",
-    "beforeBuildCommandArg": []
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
