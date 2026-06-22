@@ -1,0 +1,200 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════
+   Tauri Template — Compact Design
+   Pure grayscale palette — no blue tones
+   Explicit light / dark themes via [data-theme] attribute
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Light theme (default) ──────────────────────────────── */
+/* Design: white/light-gray backgrounds, dark accent for strong button contrast */
+:root,
+[data-theme="light"] {
+  --bg:            #f4f4f5;
+  --bg-alt:        #e4e4e7;
+  --surface:       #ffffff;
+  --surface-alt:   #fafafa;
+  --border:        #d4d4d8;
+  --border-strong: #a1a1aa;
+
+  --text:          #09090b;
+  --text-secondary:#52525b;
+  --text-muted:    #a1a1aa;
+
+  --accent:        #27272a;
+  --accent-hover:  #18181b;
+  --accent-soft:   #e4e4e7;
+  --accent-text:   #fafafa;
+
+  --success:       #52525b;
+  --success-soft:  #f4f4f5;
+  --danger:        #18181b;
+  --danger-soft:   #fafafa;
+  --warning:       #71717a;
+  --warning-soft:  #e4e4e7;
+
+  --chart-bg:      #ffffff;
+  --chart-grid:    #e4e4e7;
+  --chart-text:    #a1a1aa;
+
+  --sidebar-bg:    #fafafa;
+  --sidebar-active:#27272a;
+  --sidebar-active-text: #fafafa;
+
+  --shadow-sm:     0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md:     0 1px 3px rgba(0,0,0,0.06);
+  --shadow-lg:     0 4px 12px rgba(0,0,0,0.08);
+
+  --sidebar-width: 180px;
+
+  /* ── --color-* aliases (used by components) ─────────────── */
+  --color-primary:       var(--accent);
+  --color-primary-hover: var(--accent-hover);
+  --color-primary-soft:  var(--accent-soft);
+  --color-primary-text:  var(--accent-text);
+  --color-border:        var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-surface:       var(--surface);
+  --color-surface-alt:   var(--surface-alt);
+  --color-bg:            var(--bg);
+  --color-bg-alt:        var(--bg-alt);
+  --color-text:          var(--text);
+  --color-text-secondary:var(--text-secondary);
+  --color-text-muted:    var(--text-muted);
+  --color-danger:        var(--danger);
+  --color-danger-soft:   var(--danger-soft);
+  --color-success:       var(--success);
+  --color-success-soft:  var(--success-soft);
+  --color-warning:       var(--warning);
+  --color-warning-soft:  var(--warning-soft);
+  --color-chart-bg:      var(--chart-bg);
+  --color-chart-grid:    var(--chart-grid);
+  --color-chart-text:    var(--chart-text);
+  --shadow-sm:           var(--shadow-sm);
+  --shadow-md:           var(--shadow-md);
+  --shadow-lg:           var(--shadow-lg);
+}
+
+/* ── Dark theme (pure grayscale) ────────────────────────── */
+/* Design: near-black backgrounds, medium-light accent for button visibility */
+[data-theme="dark"] {
+  --bg:            #09090b;
+  --bg-alt:        #18181b;
+  --surface:       #111113;
+  --surface-alt:   #18181b;
+  --border:        #27272a;
+  --border-strong: #3f3f46;
+
+  --text:          #fafafa;
+  --text-secondary:#a1a1aa;
+  --text-muted:    #52525b;
+
+  --accent:        #d4d4d8;
+  --accent-hover:  #e4e4e7;
+  --accent-soft:   #27272a;
+  --accent-text:   #09090b;
+
+  --success:       #a1a1aa;
+  --success-soft:  #18181b;
+  --danger:        #d4d4d8;
+  --danger-soft:   #27272a;
+  --warning:       #71717a;
+  --warning-soft:  #18181b;
+
+  --chart-bg:      #111113;
+  --chart-grid:    #27272a;
+  --chart-text:    #52525b;
+
+  --sidebar-bg:    #0c0c0e;
+  --sidebar-active:#d4d4d8;
+  --sidebar-active-text: #09090b;
+
+  --shadow-sm:     0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md:     0 1px 3px rgba(0,0,0,0.4);
+  --shadow-lg:     0 4px 12px rgba(0,0,0,0.5);
+
+  /* ── --color-* aliases (used by components) ─────────────── */
+  --color-primary:       var(--accent);
+  --color-primary-hover: var(--accent-hover);
+  --color-primary-soft:  var(--accent-soft);
+  --color-primary-text:  var(--accent-text);
+  --color-border:        var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-surface:       var(--surface);
+  --color-surface-alt:   var(--surface-alt);
+  --color-bg:            var(--bg);
+  --color-bg-alt:        var(--bg-alt);
+  --color-text:          var(--text);
+  --color-text-secondary:var(--text-secondary);
+  --color-text-muted:    var(--text-muted);
+  --color-danger:        var(--danger);
+  --color-danger-soft:   var(--danger-soft);
+  --color-success:       var(--success);
+  --color-success-soft:  var(--success-soft);
+  --color-warning:       var(--warning);
+  --color-warning-soft:  var(--warning-soft);
+  --color-chart-bg:      var(--chart-bg);
+  --color-chart-grid:    var(--chart-grid);
+  --color-chart-text:    var(--chart-text);
+  --shadow-sm:           var(--shadow-sm);
+  --shadow-md:           var(--shadow-md);
+  --shadow-lg:           var(--shadow-lg);
+}
+
+/* ── Globals ────────────────────────────────────────────── */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'Noto Sans SC', sans-serif;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* body is transparent so Tauri's transparent window shows rounded corners */
+body {
+  background: transparent;
+}
+
+/* #root: rounded container that holds the app background */
+#root {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* Dark theme: subtle window edge highlight (macOS style) */
+[data-theme="dark"] #root {
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+}
+
+/* Data values — monospace */
+.data-mono {
+  font-family: 'IBM Plex Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* ── Focus ──────────────────────────────────────────────── */
+:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}

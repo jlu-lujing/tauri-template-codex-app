@@ -1,0 +1,13 @@
+{
+  "name": "tauri-template-codex-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "tauri": "cd frontend && npx tauri",
+    "tauri:dev": "cd frontend && npx tauri dev",
+    "tauri:build": "cd frontend && npx tauri build"
+  }
+}
