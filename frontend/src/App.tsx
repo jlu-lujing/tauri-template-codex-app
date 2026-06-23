@@ -184,7 +184,7 @@ function App() {
             padding: '12px 16px',
             background: 'var(--bg)',
             borderRadius: 10,
-            margin: 4,
+            margin: 8,
           }}
         >
           {activeTab === 'home' && <HomePage />}
