@@ -9,7 +9,6 @@ import {
   Sun,
   Moon,
 } from 'lucide-react';
-import StatusBar from './components/StatusBar';
 
 /* ── Sidebar Nav Button ────────────────────────────────── */
 
@@ -192,9 +191,7 @@ function App() {
           {activeTab === 'settings' && <SettingsPage />}
         </div>
 
-        {/* Status Bar */}
-        <StatusBar />
-      </main>
+       </main>
     </div>
   );
 }

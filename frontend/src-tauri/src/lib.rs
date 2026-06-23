@@ -166,30 +166,57 @@ pub fn run() {
             }
 
             // ── Window positioning strategy ──────────────────────────────
-            // 1. Get the primary monitor for sizing (reliable at startup)
+            // 1. Find the monitor where the mouse cursor currently is
             // 2. Resize to 85% of that monitor's physical size
             // 3. Center using physical coordinates
             //
-            // This avoids the bug where current_monitor() returns None or
-            // the wrong monitor when the window is at (0,0) on startup.
+            // Falling back to the primary monitor if no cursor position is
+            // available (e.g. headless or before the user has moved the mouse).
             // ─────────────────────────────────────────────────────────────
 
-            let primary = app
-                .primary_monitor()
-                .expect("failed to get primary monitor")
-                .expect("no primary monitor");
+            // Try to find the monitor under the cursor
+            let target_monitor = match window.cursor_position() {
+                Ok(cursor_logical) => {
+                    // cursor_position returns LogicalPosition; we need to compare
+                    // against monitor positions. Walk all monitors and pick the
+                    // one whose physical rect contains the cursor point.
+                    let monitors = app.available_monitors().unwrap_or_default();
+                    monitors
+                        .into_iter()
+                        .find(|m| {
+                            let pos = m.position();
+                            let size = m.size();
+                            cursor_logical.x >= pos.x as f64
+                                && cursor_logical.x
+                                    < (pos.x as f64 + size.width as f64)
+                                && cursor_logical.y >= pos.y as f64
+                                && cursor_logical.y
+                                    < (pos.y as f64 + size.height as f64)
+                        })
+                }
+                Err(_) => None,
+            };
 
-            // Resize to 85% of primary monitor, get target size for centering
-            let target_size = resize_to_monitor(&window, &primary);
+            // Fall back to primary monitor
+            let monitor = match target_monitor {
+                Some(m) => m,
+                None => app
+                    .primary_monitor()
+                    .expect("failed to get primary monitor")
+                    .expect("no primary monitor"),
+            };
 
-            // Center on the primary monitor using physical coordinates
-            center_window_on_monitor(&window, &primary, target_size);
+            // Resize to 85% of target monitor, get target size for centering
+            let target_size = resize_to_monitor(&window, &monitor);
+
+            // Center on the target monitor using physical coordinates
+            center_window_on_monitor(&window, &monitor, target_size);
 
             // Record the current monitor
             {
                 let monitor_state = app.state::<MonitorState>();
                 let mut name = monitor_state.last_monitor_name.lock().expect("lock poisoned");
-                *name = Some(monitor_name(&primary));
+                *name = Some(monitor_name(&monitor));
             }
 
             // ── Cross-monitor resize via polling ─────────────────────────
