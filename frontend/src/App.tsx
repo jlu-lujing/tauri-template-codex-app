@@ -37,11 +37,11 @@ function NavButton({ icon: Icon, label, active, onClick }: NavButtonProps) {
         fontSize: 13,
         fontWeight: active ? 500 : 400,
         background: active
-          ? 'var(--sidebar-accent)'
+          ? 'var(--sidebar-primary)'
           : hover
           ? 'var(--sidebar-accent)'
           : 'transparent',
-        color: active ? 'var(--sidebar-accent-foreground)' : 'var(--sidebar-foreground)',
+        color: active ? 'var(--sidebar-primary-foreground)' : 'var(--sidebar-foreground)',
         cursor: 'pointer',
         transition: 'background 150ms ease, color 150ms ease',
         border: 'none',
