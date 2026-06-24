@@ -30,6 +30,9 @@ const ASPECT_RATIO: f64 = 1.5;
 /// Fraction of monitor to use for default window size.
 const MONITOR_FRACTION: f64 = 0.85;
 
+/// How long the window must be still before we consider the drag settled.
+const SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// Tracks per-monitor window sizes and the current monitor state.
 #[derive(Debug)]
 struct MonitorState {
@@ -37,6 +40,9 @@ struct MonitorState {
     last_monitor_name: Mutex<Option<String>>,
     /// Per-monitor stored sizes: monitor_name -> (width, height).
     per_monitor_size: Mutex<HashMap<String, (u32, u32)>>,
+    /// If Some(old_name), a monitor change was detected and we're waiting
+    /// for the drag to settle before restoring the new monitor's size.
+    pending_restore: Mutex<Option<String>>,
 }
 
 impl Default for MonitorState {
@@ -44,6 +50,7 @@ impl Default for MonitorState {
         Self {
             last_monitor_name: Mutex::new(None),
             per_monitor_size: Mutex::new(HashMap::new()),
+            pending_restore: Mutex::new(None),
         }
     }
 }
@@ -140,8 +147,8 @@ fn center_window_on_monitor(
     monitor: &tauri::Monitor,
     window_size: PhysicalSize<u32>,
 ) {
-    let monitor_size = monitor.size();   // PhysicalSize<u32>
-    let monitor_pos = monitor.position(); // PhysicalPosition<i32>
+    let monitor_size = monitor.size();
+    let monitor_pos = monitor.position();
 
     let center_x = monitor_pos.x
         + ((monitor_size.width as i32 - window_size.width as i32) / 2);
@@ -180,11 +187,13 @@ fn apply_monitor_size(
 }
 
 /// Check if the window is on a different monitor than before.
-/// Returns Some((old_name, new_monitor)) if the monitor changed, None otherwise.
+/// Returns Some(old_name) if the monitor changed, None otherwise.
+///
+/// When a change is detected, `last_monitor_name` is updated to the new monitor.
 fn check_monitor_changed(
     window: &tauri::WebviewWindow,
     monitor_state: &MonitorState,
-) -> Option<(String, tauri::Monitor)> {
+) -> Option<String> {
     let current_monitor = match window.current_monitor() {
         Ok(Some(m)) => m,
         _ => return None,
@@ -207,7 +216,7 @@ fn check_monitor_changed(
             // Monitor changed!
             let old_name = prev.clone();
             *last_name = Some(current_name);
-            Some((old_name, current_monitor))
+            Some(old_name)
         }
         _ => None,
     }
@@ -318,11 +327,23 @@ pub fn run() {
             // WindowEvent::Moved when dragged between monitors. Instead we
             // poll current_monitor() every 100ms.
             //
+            // State machine:
+            //   - Idle: no pending action
+            //   - MonitorChanged(old_name): detected change, waiting for settle
+            //
             // When a monitor change is detected:
-            //   - Save current monitor's window size
-            //   - After the window settles on the new monitor (500ms still):
-            //     - Restore stored size (or compute 3:2 default)
-            //     - Center on the new monitor
+            //   - Set pending_restore = Some(old_name)
+            //   - Do NOT resize yet (window is still being dragged)
+            //
+            // When the window settles (500ms still) AND pending_restore is Some:
+            //   - Save old monitor's current size
+            //   - Restore new monitor's stored size (or compute default)
+            //   - Resize and center
+            //   - Persist to disk
+            //   - Clear pending_restore
+            //
+            // Key: we ONLY trigger restore when pending_restore is Some,
+            // preventing false triggers when no monitor change occurred.
             // ─────────────────────────────────────────────────────────────
 
             let app_handle = app.handle().clone();
@@ -330,7 +351,6 @@ pub fn run() {
                 // Wait a bit before starting to poll (let the window settle)
                 std::thread::sleep(std::time::Duration::from_secs(2));
 
-                // Track when the window last moved
                 let mut last_position: Option<(i32, i32)> = None;
                 let mut settled_at: Option<Instant> = None;
 
@@ -365,41 +385,64 @@ pub fn run() {
                         settled_at = Some(Instant::now());
                     }
 
-                    // Check for monitor change
-                    if let Some((old_name, _new_monitor)) = check_monitor_changed(&window, &monitor_state) {
-                        // Save the old monitor's current window size
-                        if let Ok(size) = window.outer_size() {
-                            let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
-                            sizes.insert(old_name.clone(), (size.width, size.height));
-                        }
-
-                        // Don't resize immediately — wait for the window to settle
-                        // on the new monitor. This avoids flickering during drag.
+                    // ── Step 1: Check for monitor change ──
+                    if let Some(old_name) = check_monitor_changed(&window, &monitor_state) {
+                        // A monitor change was detected. Mark it but don't
+                        // resize yet — the user is still dragging.
+                        let mut pending = monitor_state.pending_restore.lock().expect("lock poisoned");
+                        *pending = Some(old_name);
                     }
 
-                    // If window has been still for 500ms, check if we need to apply
-                    // the new monitor's stored size
+                    // ── Step 2: If settled AND a monitor change was detected, restore ──
                     if let Some(settled) = settled_at {
-                        if settled.elapsed() >= std::time::Duration::from_millis(500) {
-                            // Apply the stored (or default) size for the current monitor
-                            if let Ok(Some(current_monitor)) = window.current_monitor() {
-                                let current_name = monitor_name(&current_monitor);
-                                let sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
-                                if let Some(&(w, h)) = sizes.get(&current_name) {
-                                    // Only resize if dimensions differ (avoid unnecessary flicker)
-                                    if let Ok(size) = window.outer_size() {
-                                        if size.width != w || size.height != h {
+                        if settled.elapsed() >= SETTLE_TIMEOUT {
+                            let pending = {
+                                let mut pending_guard = monitor_state.pending_restore.lock().expect("lock poisoned");
+                                pending_guard.take() // take the value, leaving None
+                            };
+
+                            if let Some(old_name) = pending {
+                                // Get current monitor (the new one)
+                                if let Ok(Some(new_monitor)) = window.current_monitor() {
+                                    let new_name = monitor_name(&new_monitor);
+
+                                    // Get current window size (still the old monitor's size)
+                                    if let Ok(current_size) = window.outer_size() {
+                                        // Save old monitor's size
+                                        let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+                                        sizes.insert(old_name.clone(), (current_size.width, current_size.height));
+
+                                        // Get new monitor's target size (or compute default)
+                                        let (target_w, target_h) = match sizes.get(&new_name) {
+                                            Some(&s) => s,
+                                            None => {
+                                                let default = compute_default_size(&new_monitor);
+                                                sizes.insert(new_name.clone(), default);
+                                                default
+                                            }
+                                        };
+
+                                        // Persist to disk
+                                        let sizes_clone = sizes.clone();
+                                        let app = app_handle.clone();
+                                        let _ = std::thread::spawn(move || {
+                                            save_window_sizes(&app, &sizes_clone);
+                                        });
+
+                                        // Only resize if dimensions differ (avoid flicker)
+                                        if current_size.width != target_w || current_size.height != target_h {
                                             let _ = app_handle.run_on_main_thread(move || {
-                                                resize_window(&window, w, h);
+                                                resize_window(&window, target_w, target_h);
                                                 std::thread::sleep(std::time::Duration::from_millis(50));
                                                 if let Ok(new_size) = window.outer_size() {
-                                                    center_window_on_monitor(&window, &current_monitor, new_size);
+                                                    center_window_on_monitor(&window, &new_monitor, new_size);
                                                 }
                                             });
                                         }
                                     }
                                 }
                             }
+
                             // Reset settled timer to avoid re-triggering
                             settled_at = None;
                         }
