@@ -151,7 +151,7 @@ function App() {
         <div style={{ height: 36, flexShrink: 0 }} />
 
         {/* Navigation */}
-        <nav style={{ flex: 1, padding: '12px 8px 0', display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <nav style={{ flex: 1, padding: '12px 8px 0', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {tabs.map((tab) => (
             <NavButton
               key={tab.key}
