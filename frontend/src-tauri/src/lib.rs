@@ -218,33 +218,22 @@ fn check_monitor_changed(
     }
 }
 
-/// Perform the restore: save old monitor size, restore new monitor size, resize + center.
-fn perform_restore(app: &tauri::AppHandle, monitor_state: &MonitorState, old_name: String) {
-    let window = match app.get_webview_window("main") {
-        Some(w) => w,
-        None => return,
-    };
-
-    // Get current monitor (the new one)
-    let new_monitor = match window.current_monitor() {
-        Ok(Some(m)) => m,
-        _ => return,
-    };
-
+/// Collect data needed for restore (called on main thread, no side effects).
+/// Returns Some((old_name, new_monitor, current_size, target_w, target_h))
+/// if a resize is needed, None otherwise.
+fn collect_restore_data(
+    app: &tauri::AppHandle,
+    monitor_state: &MonitorState,
+    old_name: String,
+) -> Option<(String, tauri::Monitor, PhysicalSize<u32>, u32, u32)> {
+    let window = app.get_webview_window("main")?;
+    let new_monitor = window.current_monitor().ok().flatten()?;
     let new_name = monitor_name(&new_monitor);
+    let current_size = window.outer_size().ok()?;
 
-    // Get current window size (still the old monitor's size)
-    let current_size = match window.outer_size() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-
-    // Save old monitor's size
     let (target_w, target_h) = {
         let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
         sizes.insert(old_name.clone(), (current_size.width, current_size.height));
-
-        // Get new monitor's target size (or compute default)
         match sizes.get(&new_name) {
             Some(&s) => s,
             None => {
@@ -255,28 +244,43 @@ fn perform_restore(app: &tauri::AppHandle, monitor_state: &MonitorState, old_nam
         }
     };
 
-    // Persist to disk
-    let sizes_clone = {
-        let sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
-        sizes.clone()
-    };
-    let app_clone = app.clone();
-    let _ = std::thread::spawn(move || {
-        save_window_sizes(&app_clone, &sizes_clone);
-    });
-
-    // Only resize if dimensions differ (avoid flicker)
     if current_size.width == target_w && current_size.height == target_h {
-        return;
+        // No resize needed, but still persist
+        let sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+        save_window_sizes(app, &sizes);
+        return None;
     }
 
-    // Resize and center on main thread
-    let _ = app.run_on_main_thread(move || {
+    Some((old_name, new_monitor, current_size, target_w, target_h))
+}
+
+/// Perform the restore: save old monitor size, restore new monitor size, resize + center.
+/// MUST be called on the main thread.
+fn perform_restore(app: &tauri::AppHandle, monitor_state: &MonitorState, old_name: String) {
+    let Some((_old_name, new_monitor, _current_size, target_w, target_h)) =
+        collect_restore_data(app, monitor_state, old_name)
+    else {
+        return;
+    };
+
+    if let Some(window) = app.get_webview_window("main") {
         resize_window(&window, target_w, target_h);
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Small delay to let the resize settle before centering
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    if let Some(window) = app.get_webview_window("main") {
         if let Ok(new_size) = window.outer_size() {
             center_window_on_monitor(&window, &new_monitor, new_size);
         }
+    }
+
+    // Persist to disk (on a background thread to avoid blocking)
+    let sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned").clone();
+    let app_clone = app.clone();
+    let _ = std::thread::spawn(move || {
+        save_window_sizes(&app_clone, &sizes);
     });
 }
 
@@ -434,7 +438,7 @@ pub fn run() {
             app_handle.clone().listen("drag-ended", move |_event| {
                 let app = app_handle.clone();
 
-                // Take the pending restore (if any) — do this on the main thread
+                // Take the pending restore (if any)
                 let old_name = {
                     let monitor_state = app.state::<MonitorState>();
                     let mut pending = monitor_state.pending_restore.lock().expect("lock poisoned");
@@ -442,15 +446,17 @@ pub fn run() {
                 };
 
                 if let Some(old_name) = old_name {
-                    // Small delay to let the window settle after mouse-up,
-                    // then perform restore on the main thread
-                    let _ = app.run_on_main_thread({
-                        let app = app.clone();
-                        move || {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            let monitor_state = app.state::<MonitorState>();
-                            perform_restore(&app, &monitor_state, old_name.clone());
-                        }
+                    // Schedule restore after a short delay to let the window
+                    // settle after mouse-up. Use a background thread for the
+                    // delay, then dispatch to main thread for the actual work.
+                    let app_clone = app.clone();
+                    let _ = std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        let app2 = app_clone.clone();
+                        let _ = app_clone.run_on_main_thread(move || {
+                            let monitor_state = app2.state::<MonitorState>();
+                            perform_restore(&app2, &monitor_state, old_name);
+                        });
                     });
                 }
             });
