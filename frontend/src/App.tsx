@@ -39,7 +39,7 @@ function NavButton({ icon: Icon, label, active, onClick }: NavButtonProps) {
         background: active
           ? 'var(--sidebar-primary)'
           : hover
-          ? 'var(--sidebar-accent)'
+          ? 'color-mix(in srgb, var(--sidebar-primary) 15%, transparent)'
           : 'transparent',
         color: active ? 'var(--sidebar-primary-foreground)' : 'var(--sidebar-foreground)',
         cursor: 'pointer',
