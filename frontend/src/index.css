@@ -1,170 +1,153 @@
 @import "tailwindcss";
 
 /* ═══════════════════════════════════════════════════════════
-   Tauri Template — Compact Design
+   Tauri Template — Palot-inspired Design
    Pure grayscale palette — no blue tones
-   Explicit light / dark themes via [data-theme] attribute
+   Explicit light / dark themes via .dark class
    ═══════════════════════════════════════════════════════════ */
 
+/* ── Fonts ──────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+
 /* ── Light theme (default) ──────────────────────────────── */
-/* Design: white/light-gray backgrounds, dark accent for strong button contrast */
-:root,
-[data-theme="light"] {
-  --bg:            #f4f4f5;
-  --bg-alt:        #e4e4e7;
-  --surface:       #ffffff;
-  --surface-alt:   #fafafa;
-  --border:        #d4d4d8;
-  --border-strong: #a1a1aa;
+:root {
+  --radius: 0.75rem;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
 
-  --text:          #09090b;
-  --text-secondary:#52525b;
-  --text-muted:    #a1a1aa;
+  /* Motion */
+  --ease-enter: cubic-bezier(0.19, 1, 0.22, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 0.15s;
+  --duration-normal: 0.2s;
+  --duration-relaxed: 0.3s;
 
-  --accent:        #27272a;
-  --accent-hover:  #18181b;
-  --accent-soft:   #e4e4e7;
-  --accent-text:   #fafafa;
+  /* Text density */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.375rem;
 
-  --success:       #52525b;
-  --success-soft:  #f4f4f5;
-  --danger:        #18181b;
-  --danger-soft:   #fafafa;
-  --warning:       #71717a;
-  --warning-soft:  #e4e4e7;
+  /* Core palette */
+  --background: #ffffff;
+  --foreground: #0d0d0d;
+  --card: #ffffff;
+  --card-foreground: #0d0d0d;
+  --popover: #fcfcfc;
+  --popover-foreground: #0d0d0d;
+  --primary: #0d0d0d;
+  --primary-foreground: #ffffff;
+  --secondary: #f9f9f9;
+  --secondary-foreground: #0d0d0d;
+  --muted: #f9f9f9;
+  --muted-foreground: #414141;
+  --accent: #ededed;
+  --accent-foreground: #0d0d0d;
+  --destructive: #fa423e;
+  --destructive-foreground: #ffffff;
+  --border: #ededed;
+  --input: #ededed;
+  --ring: #0d0d0d;
 
-  --chart-bg:      #ffffff;
-  --chart-grid:    #e4e4e7;
-  --chart-text:    #a1a1aa;
+  /* Chart colors */
+  --chart-1: #52525b;
+  --chart-2: #a1a1aa;
+  --chart-3: #27272a;
+  --chart-4: #71717a;
+  --chart-5: #d4d4d8;
 
-  --sidebar-bg:    #f4f4f5;
-  --sidebar-active:#27272a;
-  --sidebar-active-text: #fafafa;
+  /* Sidebar */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #212121;
+  --sidebar-primary: #0d0d0d;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f4f4f5;
+  --sidebar-accent-foreground: #0d0d0d;
+  --sidebar-border: #ededed;
+  --sidebar-ring: #0d0d0d;
 
-  --shadow-sm:     0 1px 2px rgba(0,0,0,0.04);
-  --shadow-md:     0 1px 3px rgba(0,0,0,0.06);
-  --shadow-lg:     0 4px 12px rgba(0,0,0,0.08);
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,0.08);
 
-  --sidebar-width: 180px;
+  /* Sidebar width */
+  --sidebar-width: 17.5rem;
 
-  /* ── --color-* aliases (used by components) ─────────────── */
-  --color-primary:       var(--accent);
-  --color-primary-hover: var(--accent-hover);
-  --color-primary-soft:  var(--accent-soft);
-  --color-primary-text:  var(--accent-text);
-  --color-border:        var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-surface:       var(--surface);
-  --color-surface-alt:   var(--surface-alt);
-  --color-bg:            var(--bg);
-  --color-bg-alt:        var(--bg-alt);
-  --color-text:          var(--text);
-  --color-text-secondary:var(--text-secondary);
-  --color-text-muted:    var(--text-muted);
-  --color-danger:        var(--danger);
-  --color-danger-soft:   var(--danger-soft);
-  --color-success:       var(--success);
-  --color-success-soft:  var(--success-soft);
-  --color-warning:       var(--warning);
-  --color-warning-soft:  var(--warning-soft);
-  --color-chart-bg:      var(--chart-bg);
-  --color-chart-grid:    var(--chart-grid);
-  --color-chart-text:    var(--chart-text);
-  --shadow-sm:           var(--shadow-sm);
-  --shadow-md:           var(--shadow-md);
-  --shadow-lg:           var(--shadow-lg);
+  /* ── Glass / Frosted Glass ────────────────────────────── */
+  --glass-sidebar: 80%;
+  --glass-content: 80%;
+  --glass-card: 88%;
+  --blur-sm: 8px;
+  --blur-md: 20px;
+  --blur-lg: 20px;
 }
 
-/* ── Dark theme (pure grayscale) ────────────────────────── */
-/* Design: near-black backgrounds, medium-light accent for button visibility */
-[data-theme="dark"] {
-  --bg:            #09090b;
-  --bg-alt:        #18181b;
-  --surface:       #111113;
-  --surface-alt:   #18181b;
-  --border:        #27272a;
-  --border-strong: #3f3f46;
-
-  --text:          #fafafa;
-  --text-secondary:#a1a1aa;
-  --text-muted:    #52525b;
-
-  --accent:        #d4d4d8;
-  --accent-hover:  #e4e4e7;
-  --accent-soft:   #27272a;
-  --accent-text:   #09090b;
-
-  --success:       #a1a1aa;
-  --success-soft:  #18181b;
-  --danger:        #d4d4d8;
-  --danger-soft:   #27272a;
-  --warning:       #71717a;
-  --warning-soft:  #18181b;
-
-  --chart-bg:      #111113;
-  --chart-grid:    #27272a;
-  --chart-text:    #52525b;
-
-  --sidebar-bg:    #0c0c0e;
-  --sidebar-active:#d4d4d8;
-  --sidebar-active-text: #09090b;
-
-  --shadow-sm:     0 1px 2px rgba(0,0,0,0.3);
-  --shadow-md:     0 1px 3px rgba(0,0,0,0.4);
-  --shadow-lg:     0 4px 12px rgba(0,0,0,0.5);
-
-  /* ── --color-* aliases (used by components) ─────────────── */
-  --color-primary:       var(--accent);
-  --color-primary-hover: var(--accent-hover);
-  --color-primary-soft:  var(--accent-soft);
-  --color-primary-text:  var(--accent-text);
-  --color-border:        var(--border);
-  --color-border-strong: var(--border-strong);
-  --color-surface:       var(--surface);
-  --color-surface-alt:   var(--surface-alt);
-  --color-bg:            var(--bg);
-  --color-bg-alt:        var(--bg-alt);
-  --color-text:          var(--text);
-  --color-text-secondary:var(--text-secondary);
-  --color-text-muted:    var(--text-muted);
-  --color-danger:        var(--danger);
-  --color-danger-soft:   var(--danger-soft);
-  --color-success:       var(--success);
-  --color-success-soft:  var(--success-soft);
-  --color-warning:       var(--warning);
-  --color-warning-soft:  var(--warning-soft);
-  --color-chart-bg:      var(--chart-bg);
-  --color-chart-grid:    var(--chart-grid);
-  --color-chart-text:    var(--chart-text);
-  --shadow-sm:           var(--shadow-sm);
-  --shadow-md:           var(--shadow-md);
-  --shadow-lg:           var(--shadow-lg);
+/* ── Dark theme ─────────────────────────────────────────── */
+.dark {
+  --background: #181818;
+  --foreground: #ffffff;
+  --card: #212121;
+  --card-foreground: #ffffff;
+  --popover: #282828;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #0d0d0d;
+  --secondary: #212121;
+  --secondary-foreground: #ffffff;
+  --muted: #282828;
+  --muted-foreground: #afafaf;
+  --accent: #282828;
+  --accent-foreground: #ffffff;
+  --destructive: #fa423e;
+  --destructive-foreground: #ffffff;
+  --border: #2e2e2e;
+  --input: #2e2e2e;
+  --ring: #ffffff;
+  --chart-1: #a1a1aa;
+  --chart-2: #52525b;
+  --chart-3: #d4d4d8;
+  --chart-4: #71717a;
+  --chart-5: #27272a;
+  --sidebar: #0d0d0d;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #0d0d0d;
+  --sidebar-accent: #27272a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #ffffff;
+  --sidebar-ring: #ffffff;
 }
 
 /* ── Globals ────────────────────────────────────────────── */
 html, body, #root {
   height: 100%;
   margin: 0;
-  font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont,
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont,
     'Segoe UI', 'Noto Sans SC', sans-serif;
-  color: var(--text);
+  color: var(--foreground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* body is transparent so Tauri's transparent window shows rounded corners */
+/* body must remain transparent for Tauri's transparent window */
 body {
-  background: transparent;
+  background: transparent !important;
 }
 
 /* #root: rounded container that holds the app background */
 #root {
   border-radius: 12px;
   overflow: hidden;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 
 /* Dark theme: subtle window edge highlight (macOS style) */
-[data-theme="dark"] #root {
+.dark #root {
   box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.1);
 }
 
@@ -174,27 +157,69 @@ body {
 }
 
 /* ── Scrollbar ──────────────────────────────────────────── */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
-::-webkit-scrollbar-track {
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 2px;
+*::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ring);
 }
 
 /* ── Focus ──────────────────────────────────────────────── */
 :focus-visible {
-  outline: 1.5px solid var(--accent);
-  outline-offset: 1px;
+  outline: none;
+  outline-offset: 0;
+  box-shadow: 0 0 0 2px var(--ring);
   border-radius: 3px;
+}
+
+/* ── Base element styles ────────────────────────────────── */
+* {
+  border-color: var(--border);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Frosted Glass Effect
+   Toggle by adding/removing .glass on <html>
+   ═══════════════════════════════════════════════════════════ */
+
+/* Sidebar — semi-transparent with backdrop blur */
+:root.glass [data-slot="sidebar"] {
+  background:
+    color-mix(in srgb, var(--sidebar) var(--glass-sidebar), transparent) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(var(--blur-md));
+  backdrop-filter: saturate(180%) blur(var(--blur-md));
+}
+
+/* Content area — semi-transparent with backdrop blur */
+:root.glass [data-slot="content"] {
+  background:
+    color-mix(in srgb, var(--background) var(--glass-content), transparent) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(var(--blur-lg));
+  backdrop-filter: saturate(180%) blur(var(--blur-lg));
+}
+
+/* Content card (features/settings card) — semi-transparent */
+:root.glass [data-slot="card"] {
+  background:
+    color-mix(in srgb, var(--card) var(--glass-card), transparent) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(var(--blur-sm));
+  backdrop-filter: saturate(180%) blur(var(--blur-sm));
 }

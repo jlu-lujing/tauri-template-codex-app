@@ -4,27 +4,46 @@
 
 pub mod commands;
 
+#[cfg(target_os = "macos")]
+use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::{Manager, PhysicalPosition, PhysicalSize, Position, Size, WindowEvent};
 
-/// Tracks the current monitor state for cross-monitor resize.
+/// Window size stored per monitor for persistence.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct StoredSize {
+    w: u32,
+    h: u32,
+}
+
+/// Minimum window dimensions (must match tauri.conf.json).
+const MIN_WIDTH: u32 = 1024;
+const MIN_HEIGHT: u32 = 680;
+
+/// Target aspect ratio: 3:2 = 1.5.
+const ASPECT_RATIO: f64 = 1.5;
+
+/// Fraction of monitor to use for default window size.
+const MONITOR_FRACTION: f64 = 0.85;
+
+/// Tracks per-monitor window sizes and the current monitor state.
 #[derive(Debug)]
 struct MonitorState {
     /// The current monitor's name (for identity comparison).
     last_monitor_name: Mutex<Option<String>>,
-    /// Flag: was a monitor change detected during drag?
-    /// If true, we should center after the drag settles.
-    pending_center: Mutex<bool>,
-    /// Target window size from the last resize (for accurate centering).
-    pending_center_size: Mutex<Option<PhysicalSize<u32>>>,
+    /// Per-monitor stored sizes: monitor_name -> (width, height).
+    per_monitor_size: Mutex<HashMap<String, (u32, u32)>>,
 }
 
 impl Default for MonitorState {
     fn default() -> Self {
         Self {
             last_monitor_name: Mutex::new(None),
-            pending_center: Mutex::new(false),
-            pending_center_size: Mutex::new(None),
+            per_monitor_size: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -34,18 +53,80 @@ fn monitor_name(monitor: &tauri::Monitor) -> String {
     monitor.name().map(|n| n.to_string()).unwrap_or_default()
 }
 
-/// Compute the target window size (85% of monitor) and apply it.
+/// Compute a default window size for the given monitor using a 3:2 aspect ratio.
 ///
-/// Returns the target PhysicalSize so callers can use it for centering
-/// without relying on the (possibly stale) outer_size() after set_size.
-fn resize_to_monitor(window: &tauri::WebviewWindow, monitor: &tauri::Monitor) -> PhysicalSize<u32> {
+/// The window will not exceed 85% of the monitor's physical size.
+/// Priority: fit width first (w = max_w, h = w / 1.5), then fit height (h = max_h, w = h * 1.5).
+/// Result is clamped to [MIN_WIDTH, MIN_HEIGHT].
+fn compute_default_size(monitor: &tauri::Monitor) -> (u32, u32) {
     let physical = monitor.size();
-    let target_w = (physical.width as f64 * 0.85).round() as u32;
-    let target_h = (physical.height as f64 * 0.85).round() as u32;
+    let max_w = (physical.width as f64 * MONITOR_FRACTION).round() as u32;
+    let max_h = (physical.height as f64 * MONITOR_FRACTION).round() as u32;
 
-    let target = PhysicalSize::<u32>::new(target_w, target_h);
-    let _ = window.set_size(Size::Physical(target));
-    target
+    // Try width-first: w = max_w, h = w / 1.5
+    let (w, h) = {
+        let w = max_w;
+        let h = (w as f64 / ASPECT_RATIO).round() as u32;
+        if h <= max_h {
+            (w, h)
+        } else {
+            // Fall back to height-first: h = max_h, w = h * 1.5
+            let h = max_h;
+            let w = (h as f64 * ASPECT_RATIO).round() as u32;
+            (w, h)
+        }
+    };
+
+    // Clamp to minimums
+    let w = w.max(MIN_WIDTH);
+    let h = h.max(MIN_HEIGHT);
+
+    (w, h)
+}
+
+/// Read persisted window sizes from disk.
+fn load_window_sizes(app: &tauri::AppHandle) -> HashMap<String, (u32, u32)> {
+    let path = match app.path().app_data_dir() {
+        Ok(dir) => dir.join("window_sizes.json"),
+        Err(_) => return HashMap::new(),
+    };
+
+    let data = match std::fs::read_to_string(&path) {
+        Ok(d) => d,
+        Err(_) => return HashMap::new(),
+    };
+
+    let parsed: HashMap<String, StoredSize> = match serde_json::from_str(&data) {
+        Ok(p) => p,
+        Err(_) => return HashMap::new(),
+    };
+
+    parsed.into_iter().map(|(k, v)| (k, (v.w, v.h))).collect()
+}
+
+/// Write per-monitor window sizes to disk.
+fn save_window_sizes(app: &tauri::AppHandle, sizes: &HashMap<String, (u32, u32)>) {
+    let path = match app.path().app_data_dir() {
+        Ok(dir) => dir.join("window_sizes.json"),
+        Err(_) => return,
+    };
+
+    let stored: HashMap<String, StoredSize> = sizes
+        .iter()
+        .map(|(k, (w, h))| (k.clone(), StoredSize { w: *w, h: *h }))
+        .collect();
+
+    let data = match serde_json::to_string_pretty(&stored) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    let _ = std::fs::write(&path, data);
+}
+
+/// Resize the window to the given (width, height).
+fn resize_window(window: &tauri::WebviewWindow, w: u32, h: u32) {
+    let _ = window.set_size(Size::Physical(PhysicalSize::<u32>::new(w, h)));
 }
 
 /// Center the window on the given monitor using **physical** coordinates.
@@ -54,10 +135,6 @@ fn resize_to_monitor(window: &tauri::WebviewWindow, monitor: &tauri::Monitor) ->
 /// windows on macOS the NSWindow frame isn't fully initialized at that
 /// point, causing incorrect centering (especially with multiple monitors
 /// arranged in non-standard layouts).
-///
-/// The `window_size` parameter is the **target** size (from resize_to_monitor),
-/// NOT `outer_size()`, because `set_size` is asynchronous and `outer_size()`
-/// may return a stale value immediately after `set_size`.
 fn center_window_on_monitor(
     window: &tauri::WebviewWindow,
     monitor: &tauri::Monitor,
@@ -74,12 +151,40 @@ fn center_window_on_monitor(
     let _ = window.set_position(Position::Physical(PhysicalPosition::<i32>::new(center_x, center_y)));
 }
 
+/// Apply the stored (or default) size for the given monitor and center the window.
+fn apply_monitor_size(
+    window: &tauri::WebviewWindow,
+    monitor: &tauri::Monitor,
+    monitor_state: &MonitorState,
+) {
+    let name = monitor_name(monitor);
+    let (w, h) = {
+        let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+        if let Some(&size) = sizes.get(&name) {
+            size
+        } else {
+            let default = compute_default_size(monitor);
+            sizes.insert(name.clone(), default);
+            default
+        }
+    };
+
+    resize_window(window, w, h);
+
+    // Small delay to let the resize settle before centering
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    if let Ok(size) = window.outer_size() {
+        center_window_on_monitor(window, monitor, size);
+    }
+}
+
 /// Check if the window is on a different monitor than before.
-/// Returns Some(new_monitor) if the monitor changed, None otherwise.
+/// Returns Some((old_name, new_monitor)) if the monitor changed, None otherwise.
 fn check_monitor_changed(
     window: &tauri::WebviewWindow,
     monitor_state: &MonitorState,
-) -> Option<tauri::Monitor> {
+) -> Option<(String, tauri::Monitor)> {
     let current_monitor = match window.current_monitor() {
         Ok(Some(m)) => m,
         _ => return None,
@@ -100,32 +205,12 @@ fn check_monitor_changed(
         }
         Some(prev) if prev.as_str() != current_name => {
             // Monitor changed!
+            let old_name = prev.clone();
             *last_name = Some(current_name);
-            Some(current_monitor)
+            Some((old_name, current_monitor))
         }
         _ => None,
     }
-}
-
-/// Handle a monitor change during drag: **resize only**, do NOT center.
-/// Sets a flag so the centering logic can center after the drag settles.
-fn handle_monitor_change_during_drag(
-    window: &tauri::WebviewWindow,
-    monitor: &tauri::Monitor,
-    monitor_state: &MonitorState,
-) {
-    // Resize to the new monitor's size (user sees the window grow/shrink)
-    let target_size = resize_to_monitor(window, monitor);
-
-    // Store the target size for later centering
-    {
-        let mut size = monitor_state.pending_center_size.lock().expect("lock poisoned");
-        *size = Some(target_size);
-    }
-
-    // Mark that we need to center after drag settles
-    let mut pending = monitor_state.pending_center.lock().expect("lock poisoned");
-    *pending = true;
 }
 
 /// Application entry point — called from main.rs
@@ -149,6 +234,17 @@ pub fn run() {
             {
                 let _ = window.set_shadow(true);
 
+                // Apply native macOS vibrancy (NSVisualEffectView) — blurs the
+                // desktop wallpaper through the window. The webview stays
+                // transparent so the vibrancy shows through.
+                apply_vibrancy(
+                    &window,
+                    NSVisualEffectMaterial::HudWindow,
+                    Some(NSVisualEffectState::Active),
+                    None,
+                )
+                .expect("failed to apply vibrancy");
+
                 // macOS: fix focus loss on frameless window when switching back
                 let w = window.clone();
                 window.on_window_event(move |event| {
@@ -165,21 +261,23 @@ pub fn run() {
                 });
             }
 
+            // ── Load persisted per-monitor sizes ─────────────────────────
+            let monitor_state = app.state::<MonitorState>();
+            let stored_sizes = load_window_sizes(app.handle());
+            {
+                let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+                *sizes = stored_sizes;
+            }
+
             // ── Window positioning strategy ──────────────────────────────
             // 1. Find the monitor where the mouse cursor currently is
-            // 2. Resize to 85% of that monitor's physical size
+            // 2. Apply stored size for that monitor (or compute 3:2 default)
             // 3. Center using physical coordinates
-            //
-            // Falling back to the primary monitor if no cursor position is
-            // available (e.g. headless or before the user has moved the mouse).
             // ─────────────────────────────────────────────────────────────
 
             // Try to find the monitor under the cursor
             let target_monitor = match window.cursor_position() {
                 Ok(cursor_logical) => {
-                    // cursor_position returns LogicalPosition; we need to compare
-                    // against monitor positions. Walk all monitors and pick the
-                    // one whose physical rect contains the cursor point.
                     let monitors = app.available_monitors().unwrap_or_default();
                     monitors
                         .into_iter()
@@ -206,15 +304,11 @@ pub fn run() {
                     .expect("no primary monitor"),
             };
 
-            // Resize to 85% of target monitor, get target size for centering
-            let target_size = resize_to_monitor(&window, &monitor);
-
-            // Center on the target monitor using physical coordinates
-            center_window_on_monitor(&window, &monitor, target_size);
+            // Apply stored or default size and center
+            apply_monitor_size(&window, &monitor, &monitor_state);
 
             // Record the current monitor
             {
-                let monitor_state = app.state::<MonitorState>();
                 let mut name = monitor_state.last_monitor_name.lock().expect("lock poisoned");
                 *name = Some(monitor_name(&monitor));
             }
@@ -222,14 +316,13 @@ pub fn run() {
             // ── Cross-monitor resize via polling ─────────────────────────
             // Transparent borderless windows on macOS do NOT reliably fire
             // WindowEvent::Moved when dragged between monitors. Instead we
-            // poll current_monitor() every 500ms.
+            // poll current_monitor() every 100ms.
             //
             // When a monitor change is detected:
-            //   - During drag: resize to new monitor (NO centering)
-            //   - After drag settles: center on new monitor
-            //
-            // We detect "drag settled" by observing that the window stops
-            // moving for 800ms, then checking if pending_center is true.
+            //   - Save current monitor's window size
+            //   - After the window settles on the new monitor (500ms still):
+            //     - Restore stored size (or compute 3:2 default)
+            //     - Center on the new monitor
             // ─────────────────────────────────────────────────────────────
 
             let app_handle = app.handle().clone();
@@ -237,8 +330,9 @@ pub fn run() {
                 // Wait a bit before starting to poll (let the window settle)
                 std::thread::sleep(std::time::Duration::from_secs(2));
 
-                // Track the last known window position to detect when dragging stops
+                // Track when the window last moved
                 let mut last_position: Option<(i32, i32)> = None;
+                let mut settled_at: Option<Instant> = None;
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -263,31 +357,80 @@ pub fn run() {
                     };
                     last_position = Some(current_pos);
 
-                    // ── Step 1: Check for monitor change (resize only) ──
-                    if let Some(new_monitor) = check_monitor_changed(&window, &monitor_state) {
-                        handle_monitor_change_during_drag(&window, &new_monitor, &monitor_state);
+                    if is_moving {
+                        // Window moved — reset settled timer
+                        settled_at = None;
+                    } else if settled_at.is_none() {
+                        // Window just stopped moving
+                        settled_at = Some(Instant::now());
                     }
 
-                    // ── Step 2: If drag settled and center pending, center ──
-                    if !is_moving {
-                        let mut pending = monitor_state.pending_center.lock().expect("lock poisoned");
-                        if *pending {
-                            *pending = false;
+                    // Check for monitor change
+                    if let Some((old_name, _new_monitor)) = check_monitor_changed(&window, &monitor_state) {
+                        // Save the old monitor's current window size
+                        if let Ok(size) = window.outer_size() {
+                            let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+                            sizes.insert(old_name.clone(), (size.width, size.height));
+                        }
 
-                            // Grab the stored target size
-                            let mut stored_size = monitor_state.pending_center_size.lock().expect("lock poisoned");
-                            let target_size = stored_size.take();
+                        // Don't resize immediately — wait for the window to settle
+                        // on the new monitor. This avoids flickering during drag.
+                    }
 
-                            // Center on the current monitor immediately
-                            if let Ok(Some(monitor)) = window.current_monitor() {
-                                if let Some(size) = target_size {
-                                    let _ = app_handle.run_on_main_thread(move || {
-                                        center_window_on_monitor(&window, &monitor, size);
-                                    });
+                    // If window has been still for 500ms, check if we need to apply
+                    // the new monitor's stored size
+                    if let Some(settled) = settled_at {
+                        if settled.elapsed() >= std::time::Duration::from_millis(500) {
+                            // Apply the stored (or default) size for the current monitor
+                            if let Ok(Some(current_monitor)) = window.current_monitor() {
+                                let current_name = monitor_name(&current_monitor);
+                                let sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+                                if let Some(&(w, h)) = sizes.get(&current_name) {
+                                    // Only resize if dimensions differ (avoid unnecessary flicker)
+                                    if let Ok(size) = window.outer_size() {
+                                        if size.width != w || size.height != h {
+                                            let _ = app_handle.run_on_main_thread(move || {
+                                                resize_window(&window, w, h);
+                                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                                if let Ok(new_size) = window.outer_size() {
+                                                    center_window_on_monitor(&window, &current_monitor, new_size);
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            // Reset settled timer to avoid re-triggering
+                            settled_at = None;
+                        }
+                    }
+                }
+            });
+
+            // ── Save window size on close ────────────────────────────────
+            let app_handle = app.handle().clone();
+            let close_window = window.clone();
+            close_window.clone().on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { .. } = event {
+                    let app = app_handle.clone();
+                    let win = close_window.clone();
+
+                    // Save on main thread to ensure size is up-to-date
+                    let _ = app.run_on_main_thread({
+                        let app = app.clone();
+                        move || {
+                            let monitor_state = app.state::<MonitorState>();
+                            if let Ok(Some(monitor)) = win.current_monitor() {
+                                let name = monitor_name(&monitor);
+                                if let Ok(size) = win.outer_size() {
+                                    let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+                                    sizes.insert(name.clone(), (size.width, size.height));
+                                    // Persist to disk
+                                    save_window_sizes(&app, &sizes);
                                 }
                             }
                         }
-                    }
+                    });
                 }
             });
 

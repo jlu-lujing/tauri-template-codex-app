@@ -12,8 +12,8 @@
     "windows": [
       {
         "title": "Tauri Template",
-        "width": 1400,
-        "height": 900,
+        "width": 1200,
+        "height": 800,
         "minWidth": 1024,
         "minHeight": 680,
         "transparent": true,

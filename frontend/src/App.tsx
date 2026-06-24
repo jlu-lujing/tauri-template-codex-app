@@ -30,19 +30,20 @@ function NavButton({ icon: Icon, label, active, onClick }: NavButtonProps) {
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '8px 12px',
-        borderRadius: 6,
+        gap: 8,
+        padding: '0 8px',
+        height: 36,
+        borderRadius: 'var(--radius-sm)',
         fontSize: 13,
-        fontWeight: active ? 600 : 400,
+        fontWeight: active ? 500 : 400,
         background: active
-          ? 'var(--accent-soft)'
+          ? 'var(--sidebar-accent)'
           : hover
-          ? 'var(--bg-alt)'
+          ? 'var(--sidebar-accent)'
           : 'transparent',
-        color: active ? 'var(--accent)' : 'var(--text-secondary)',
+        color: active ? 'var(--sidebar-accent-foreground)' : 'var(--sidebar-foreground)',
         cursor: 'pointer',
-        transition: 'all 0.12s ease',
+        transition: 'background 150ms ease, color 150ms ease',
         border: 'none',
         width: '100%',
         textAlign: 'left',
@@ -73,18 +74,19 @@ function ActionButton({ icon, label, onClick }: ActionButtonProps) {
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '8px 12px',
-        borderRadius: 6,
+        gap: 8,
+        padding: '0 8px',
+        height: 36,
+        borderRadius: 'var(--radius-sm)',
         fontSize: 13,
         fontWeight: 400,
-        background: hover ? 'var(--bg-alt)' : 'transparent',
-        color: 'var(--text-secondary)',
+        background: hover ? 'var(--sidebar-accent)' : 'transparent',
+        color: 'var(--sidebar-foreground)',
         cursor: 'pointer',
         border: 'none',
         width: '100%',
         textAlign: 'left',
-        transition: 'all 0.12s ease',
+        transition: 'background 150ms ease, color 150ms ease',
       }}
     >
       {icon}
@@ -105,8 +107,9 @@ function App() {
   return (
     <div
       className="flex h-screen"
+      data-slot="root"
       style={{
-        background: 'var(--sidebar-bg)',
+        background: 'transparent',
         borderRadius: 12,
         overflow: 'hidden',
         position: 'relative',
@@ -134,18 +137,21 @@ function App() {
       {/* Sidebar */}
       <aside
         id="tauri-sidebar"
+        data-slot="sidebar"
         style={{
           width: 'var(--sidebar-width)',
           display: 'flex',
           flexDirection: 'column',
           flexShrink: 0,
+          background: 'var(--sidebar)',
+          color: 'var(--sidebar-foreground)',
         }}
       >
         {/* Traffic light spacer — avoid overlapping with native overlay buttons */}
         <div style={{ height: 36, flexShrink: 0 }} />
 
         {/* Navigation */}
-        <nav style={{ flex: 1, padding: '8px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <nav style={{ flex: 1, padding: '12px 8px 0', display: 'flex', flexDirection: 'column', gap: 1 }}>
           {tabs.map((tab) => (
             <NavButton
               key={tab.key}
@@ -160,10 +166,10 @@ function App() {
         {/* Footer: theme toggle */}
         <div
           style={{
-            padding: '8px',
+            padding: '0 8px 12px',
             display: 'flex',
             flexDirection: 'column',
-            gap: 2,
+            gap: 1,
           }}
         >
           <ActionButton
@@ -174,24 +180,25 @@ function App() {
         </div>
       </aside>
 
-      {/* Main Content — rounded container */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Main Content Area */}
+      <main data-slot="content" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Content card — rounded left, subtle shadow */}
         <div
           style={{
             flex: 1,
             overflow: 'auto',
-            padding: '12px 16px',
-            background: 'var(--bg)',
-            borderRadius: 10,
-            margin: 8,
+            padding: '16px 24px',
+            background: 'var(--background)',
+            borderRadius: 'var(--radius-xl)',
+            margin: '8px 8px 8px 0',
+            boxShadow: '-1px 0 3px -1px rgba(0,0,0,0.08)',
+            minHeight: 0,
           }}
         >
           {activeTab === 'home' && <HomePage />}
-
           {activeTab === 'settings' && <SettingsPage />}
         </div>
-
-       </main>
+      </main>
     </div>
   );
 }
@@ -205,33 +212,32 @@ function HomePage() {
         style={{
           fontSize: 16,
           fontWeight: 700,
-          color: 'var(--text)',
+          color: 'var(--foreground)',
           margin: 0,
           marginBottom: 12,
         }}
       >
         Tauri Template
       </h1>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-        A minimal Tauri template with borderless window, sidebar navigation, status bar, and dark/light theme.
+      <p style={{ fontSize: 13, color: 'var(--muted-foreground)', lineHeight: 1.6 }}>
+        A minimal Tauri template with borderless window, sidebar navigation, and dark/light theme.
       </p>
 
-      <div
+      <div data-slot="card"
         style={{
           marginTop: 24,
           padding: 16,
-          background: 'var(--surface)',
-          borderRadius: 8,
+          background: 'var(--card)',
+          borderRadius: 'var(--radius)',
           border: '1px solid var(--border)',
         }}
       >
-        <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 8 }}>Features</h2>
-        <ul style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
+        <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 8, color: 'var(--card-foreground)' }}>Features</h2>
+        <ul style={{ fontSize: 13, color: 'var(--muted-foreground)', margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
           <li>Borderless window with transparent background and rounded corners</li>
           <li>macOS overlay title bar with custom traffic light position</li>
           <li>Drag region and double-click to maximize</li>
           <li>Sidebar navigation with theme toggle</li>
-          <li>Bottom status bar</li>
           <li>Light / Dark theme with CSS variables</li>
           <li>Cross-monitor resize and centering</li>
         </ul>
@@ -251,7 +257,7 @@ function SettingsPage() {
         style={{
           fontSize: 16,
           fontWeight: 700,
-          color: 'var(--text)',
+          color: 'var(--foreground)',
           margin: 0,
           marginBottom: 12,
         }}
@@ -260,29 +266,33 @@ function SettingsPage() {
       </h1>
 
       <div
+        data-slot="card"
         style={{
           padding: 16,
-          background: 'var(--surface)',
-          borderRadius: 8,
+          background: 'var(--card)',
+          borderRadius: 'var(--radius)',
           border: '1px solid var(--border)',
         }}
       >
-        <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 12 }}>Appearance</h2>
+        <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0, marginBottom: 12, color: 'var(--card-foreground)' }}>Appearance</h2>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Theme</span>
+          <span style={{ fontSize: 13, color: 'var(--muted-foreground)' }}>Theme</span>
           <button
             onClick={toggle}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 6,
-              padding: '6px 12px',
-              borderRadius: 6,
+              padding: '4px 12px',
+              height: 32,
+              borderRadius: 'var(--radius-sm)',
               fontSize: 13,
-              background: 'var(--accent-soft)',
-              color: 'var(--accent)',
+              fontWeight: 500,
+              background: 'var(--primary)',
+              color: 'var(--primary-foreground)',
               border: 'none',
               cursor: 'pointer',
+              transition: 'background 150ms ease',
             }}
           >
             {mode === 'light' ? <Moon size={14} /> : <Sun size={14} />}
