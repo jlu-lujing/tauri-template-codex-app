@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { emit, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
+import { emit } from '@tauri-apps/api/event';
 import './App.css';
 import type { Tab } from './types';
 import { useThemeStore } from './stores/themeStore';
