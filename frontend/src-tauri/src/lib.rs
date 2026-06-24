@@ -10,6 +10,7 @@ use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectStat
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::{Manager, PhysicalPosition, PhysicalSize, Position, Size, WindowEvent};
 
 /// Window size stored per monitor for persistence.
@@ -28,6 +29,10 @@ const ASPECT_RATIO: f64 = 1.5;
 
 /// Fraction of monitor to use for default window size.
 const MONITOR_FRACTION: f64 = 0.85;
+
+/// How long the window must be still before we consider the drag settled.
+/// Used as a fallback when mouse button state detection is unavailable.
+const SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Tracks per-monitor window sizes and the current monitor state.
 #[derive(Debug)]
@@ -214,31 +219,38 @@ fn check_monitor_changed(
 }
 
 /// Check if the left mouse button is currently pressed (macOS only).
-/// Returns true if pressed, false if released.
-/// On non-macOS, always returns false (button not pressed).
+/// Returns Some(true) if pressed, Some(false) if released, None if detection failed.
 #[cfg(target_os = "macos")]
-fn is_left_mouse_button_pressed() -> bool {
-    // Use CoreGraphics CGEventSource to check mouse button state.
-    // kCGEventSourceStateCombinedSessionState = 1
-    // kCGMouseButtonLeft = 0
+fn is_left_mouse_button_pressed() -> Option<bool> {
+    // CoreGraphics constants
+    const K_CGEVENTSOURCESTATECOMBINEDSESSIONSTATE: u32 = 1;
+    const K_CGMOUSEBUTTONLEFT: u32 = 0;
+
+    // Link to CoreGraphics framework
+    #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         fn CGEventSourceCreate(state: u32) -> *mut std::os::raw::c_void;
         fn CGEventSourceButtonState(source: *mut std::os::raw::c_void, button: u32) -> bool;
+    }
+
+    // Link to CoreFoundation framework for CFRelease
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
         fn CFRelease(cf: *const std::os::raw::c_void);
     }
 
-    const CGEVENTSOURCESTATECOMBINATIONSSESSIONSTATE: u32 = 1;
-    const CGMOUSEBUTTONLEFT: u32 = 0;
-
-    let source = unsafe { CGEventSourceCreate(CGEVENTSOURCESTATECOMBINATIONSSESSIONSTATE) };
-    let pressed = unsafe { CGEventSourceButtonState(source, CGMOUSEBUTTONLEFT) };
+    let source = unsafe { CGEventSourceCreate(K_CGEVENTSOURCESTATECOMBINEDSESSIONSTATE) };
+    if source.is_null() {
+        return None; // FFI failed, fall back to settle timer
+    }
+    let pressed = unsafe { CGEventSourceButtonState(source, K_CGMOUSEBUTTONLEFT) };
     unsafe { CFRelease(source as *const std::os::raw::c_void) };
-    pressed
+    Some(pressed)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn is_left_mouse_button_pressed() -> bool {
-    false
+fn is_left_mouse_button_pressed() -> Option<bool> {
+    None
 }
 
 /// Application entry point — called from main.rs
@@ -352,22 +364,25 @@ pub fn run() {
             //   - Do NOT resize yet (user is still dragging)
             //
             // Each poll, if pending_restore is Some:
-            //   - Check if left mouse button is released (macOS CGEventSource)
-            //   - If released + window is still → drag has ended:
-            //     - Save old monitor's current window size
-            //     - Restore new monitor's stored size (or compute default)
-            //     - Resize and center
-            //     - Persist to disk
-            //     - Clear pending_restore
+            //   - Try macOS CGEventSource to check if left mouse button is released
+            //   - If released → drag has ended: restore immediately
+            //   - If detection unavailable → fall back to 400ms settle timer
             //
-            // This approach is fast and accurate because we detect the actual
-            // mouse button release, not a time-based heuristic.
+            // On restore:
+            //   - Save old monitor's current window size
+            //   - Restore new monitor's stored size (or compute default)
+            //   - Resize and center
+            //   - Persist to disk
+            //   - Clear pending_restore
             // ─────────────────────────────────────────────────────────────
 
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
                 // Wait a bit before starting to poll (let the window settle)
                 std::thread::sleep(std::time::Duration::from_secs(2));
+
+                let mut last_position: Option<(i32, i32)> = None;
+                let mut settled_at: Option<Instant> = None;
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -379,6 +394,27 @@ pub fn run() {
 
                     let monitor_state = app_handle.state::<MonitorState>();
 
+                    // Get current window position
+                    let current_pos = match window.outer_position() {
+                        Ok(pos) => (pos.x, pos.y),
+                        Err(_) => continue,
+                    };
+
+                    // Check if window is still moving (dragging)
+                    let is_moving = match last_position {
+                        Some(prev) => prev != current_pos,
+                        None => false,
+                    };
+                    last_position = Some(current_pos);
+
+                    if is_moving {
+                        // Window moved — reset settled timer
+                        settled_at = None;
+                    } else if settled_at.is_none() {
+                        // Window just stopped moving
+                        settled_at = Some(Instant::now());
+                    }
+
                     // ── Step 1: Check for monitor change ──
                     if let Some(old_name) = check_monitor_changed(&window, &monitor_state) {
                         // A monitor change was detected. Mark it but do NOT
@@ -387,59 +423,77 @@ pub fn run() {
                         *pending = Some(old_name);
                     }
 
-                    // ── Step 2: If pending restore and mouse button released, restore ──
-                    let old_name = {
-                        let mut pending = monitor_state.pending_restore.lock().expect("lock poisoned");
-                        if !is_left_mouse_button_pressed() {
-                            pending.take()
+                    // ── Step 2: Determine if drag has ended ──
+                    // First try mouse button state (instant), fall back to settle timer
+                    let drag_ended = {
+                        let pending = monitor_state.pending_restore.lock().expect("lock poisoned");
+                        if pending.is_none() {
+                            false
+                        } else if let Some(pressed) = is_left_mouse_button_pressed() {
+                            !pressed // button released → drag ended
                         } else {
-                            None
+                            // Fallback: settle timer
+                            if let Some(settled) = settled_at {
+                                settled.elapsed() >= SETTLE_TIMEOUT
+                            } else {
+                                false
+                            }
                         }
                     };
 
-                    if let Some(old_name) = old_name {
-                        // Get current monitor (the new one)
-                        if let Ok(Some(new_monitor)) = window.current_monitor() {
-                            let new_name = monitor_name(&new_monitor);
+                    if drag_ended {
+                        let old_name = {
+                            let mut pending = monitor_state.pending_restore.lock().expect("lock poisoned");
+                            pending.take()
+                        };
 
-                            // Get current window size (still the old monitor's size)
-                            if let Ok(current_size) = window.outer_size() {
-                                // Save old monitor's size
-                                let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
-                                sizes.insert(old_name.clone(), (current_size.width, current_size.height));
+                        if let Some(old_name) = old_name {
+                            // Get current monitor (the new one)
+                            if let Ok(Some(new_monitor)) = window.current_monitor() {
+                                let new_name = monitor_name(&new_monitor);
 
-                                // Get new monitor's target size (or compute default)
-                                let (target_w, target_h) = match sizes.get(&new_name) {
-                                    Some(&s) => s,
-                                    None => {
-                                        let default = compute_default_size(&new_monitor);
-                                        sizes.insert(new_name.clone(), default);
-                                        default
-                                    }
-                                };
+                                // Get current window size (still the old monitor's size)
+                                if let Ok(current_size) = window.outer_size() {
+                                    // Save old monitor's size
+                                    let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+                                    sizes.insert(old_name.clone(), (current_size.width, current_size.height));
 
-                                // Persist to disk
-                                let sizes_clone = sizes.clone();
-                                let app = app_handle.clone();
-                                let _ = std::thread::spawn(move || {
-                                    save_window_sizes(&app, &sizes_clone);
-                                });
-
-                                // Only resize if dimensions differ (avoid flicker)
-                                if current_size.width != target_w || current_size.height != target_h {
-                                    let app2 = app_handle.clone();
-                                    let _ = app_handle.run_on_main_thread(move || {
-                                        if let Some(win) = app2.get_webview_window("main") {
-                                            resize_window(&win, target_w, target_h);
-                                            std::thread::sleep(std::time::Duration::from_millis(50));
-                                            if let Ok(new_size) = win.outer_size() {
-                                                center_window_on_monitor(&win, &new_monitor, new_size);
-                                            }
+                                    // Get new monitor's target size (or compute default)
+                                    let (target_w, target_h) = match sizes.get(&new_name) {
+                                        Some(&s) => s,
+                                        None => {
+                                            let default = compute_default_size(&new_monitor);
+                                            sizes.insert(new_name.clone(), default);
+                                            default
                                         }
+                                    };
+
+                                    // Persist to disk
+                                    let sizes_clone = sizes.clone();
+                                    let app = app_handle.clone();
+                                    let _ = std::thread::spawn(move || {
+                                        save_window_sizes(&app, &sizes_clone);
                                     });
+
+                                    // Only resize if dimensions differ (avoid flicker)
+                                    if current_size.width != target_w || current_size.height != target_h {
+                                        let app2 = app_handle.clone();
+                                        let _ = app_handle.run_on_main_thread(move || {
+                                            if let Some(win) = app2.get_webview_window("main") {
+                                                resize_window(&win, target_w, target_h);
+                                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                                if let Ok(new_size) = win.outer_size() {
+                                                    center_window_on_monitor(&win, &new_monitor, new_size);
+                                                }
+                                            }
+                                        });
+                                    }
                                 }
                             }
                         }
+
+                        // Reset settled timer to avoid re-triggering
+                        settled_at = None;
                     }
                 }
             });
