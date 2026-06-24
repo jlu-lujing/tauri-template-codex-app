@@ -3,11 +3,17 @@
 /* ═══════════════════════════════════════════════════════════
    Tauri Template — Palot-inspired Design
    Pure grayscale palette — no blue tones
-   Explicit light / dark themes via .dark class
+   Explicit light /dark themes via .dark class
    ═══════════════════════════════════════════════════════════ */
 
 /* ── Fonts ──────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('https://fonts.gstatic.com/s/inter/v22/UcCo3FwrK3iLTcviYwY.woff2') format('woff2');
+}
 
 /* ── Light theme (default) ──────────────────────────────── */
 :root {
