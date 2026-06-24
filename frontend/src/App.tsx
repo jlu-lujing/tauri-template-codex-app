@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { emit } from '@tauri-apps/api/event';
 import './App.css';
 import type { Tab } from './types';
 import { useThemeStore } from './stores/themeStore';
@@ -104,17 +103,6 @@ function App() {
     { key: 'home', label: 'Home', icon: Home },
     { key: 'settings', label: 'Settings', icon: Settings },
   ];
-
-  // Notify backend when the user releases the mouse anywhere.
-  // This is used to detect the end of a window drag, so the
-  // backend can restore the per-monitor window size.
-  useEffect(() => {
-    const handleMouseUp = () => {
-      emit('drag-ended').catch(() => {});
-    };
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => document.removeEventListener('mouseup', handleMouseUp);
-  }, []);
 
   return (
     <div

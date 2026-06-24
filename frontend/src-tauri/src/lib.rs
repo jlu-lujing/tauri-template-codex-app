@@ -10,7 +10,8 @@ use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectStat
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{Listener, Manager, PhysicalPosition, PhysicalSize, Position, Size, WindowEvent};
+use std::time::Instant;
+use tauri::{Manager, PhysicalPosition, PhysicalSize, Position, Size, WindowEvent};
 
 /// Window size stored per monitor for persistence.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -29,6 +30,9 @@ const ASPECT_RATIO: f64 = 1.5;
 /// Fraction of monitor to use for default window size.
 const MONITOR_FRACTION: f64 = 0.85;
 
+/// How long the window must be still before we consider the drag settled.
+const SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(2000);
+
 /// Tracks per-monitor window sizes and the current monitor state.
 #[derive(Debug)]
 struct MonitorState {
@@ -37,7 +41,7 @@ struct MonitorState {
     /// Per-monitor stored sizes: monitor_name -> (width, height).
     per_monitor_size: Mutex<HashMap<String, (u32, u32)>>,
     /// If Some(old_name), a monitor change was detected and we're waiting
-    /// for the frontend "drag-ended" event before restoring the new monitor's size.
+    /// for the drag to settle before restoring the new monitor's size.
     pending_restore: Mutex<Option<String>>,
 }
 
@@ -133,11 +137,6 @@ fn resize_window(window: &tauri::WebviewWindow, w: u32, h: u32) {
 }
 
 /// Center the window on the given monitor using **physical** coordinates.
-///
-/// We do NOT use `window.center()` because for transparent borderless
-/// windows on macOS the NSWindow frame isn't fully initialized at that
-/// point, causing incorrect centering (especially with multiple monitors
-/// arranged in non-standard layouts).
 fn center_window_on_monitor(
     window: &tauri::WebviewWindow,
     monitor: &tauri::Monitor,
@@ -216,72 +215,6 @@ fn check_monitor_changed(
         }
         _ => None,
     }
-}
-
-/// Collect data needed for restore (called on main thread, no side effects).
-/// Returns Some((old_name, new_monitor, current_size, target_w, target_h))
-/// if a resize is needed, None otherwise.
-fn collect_restore_data(
-    app: &tauri::AppHandle,
-    monitor_state: &MonitorState,
-    old_name: String,
-) -> Option<(String, tauri::Monitor, PhysicalSize<u32>, u32, u32)> {
-    let window = app.get_webview_window("main")?;
-    let new_monitor = window.current_monitor().ok().flatten()?;
-    let new_name = monitor_name(&new_monitor);
-    let current_size = window.outer_size().ok()?;
-
-    let (target_w, target_h) = {
-        let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
-        sizes.insert(old_name.clone(), (current_size.width, current_size.height));
-        match sizes.get(&new_name) {
-            Some(&s) => s,
-            None => {
-                let default = compute_default_size(&new_monitor);
-                sizes.insert(new_name.clone(), default);
-                default
-            }
-        }
-    };
-
-    if current_size.width == target_w && current_size.height == target_h {
-        // No resize needed, but still persist
-        let sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
-        save_window_sizes(app, &sizes);
-        return None;
-    }
-
-    Some((old_name, new_monitor, current_size, target_w, target_h))
-}
-
-/// Perform the restore: save old monitor size, restore new monitor size, resize + center.
-/// MUST be called on the main thread.
-fn perform_restore(app: &tauri::AppHandle, monitor_state: &MonitorState, old_name: String) {
-    let Some((_old_name, new_monitor, _current_size, target_w, target_h)) =
-        collect_restore_data(app, monitor_state, old_name)
-    else {
-        return;
-    };
-
-    if let Some(window) = app.get_webview_window("main") {
-        resize_window(&window, target_w, target_h);
-    }
-
-    // Small delay to let the resize settle before centering
-    std::thread::sleep(std::time::Duration::from_millis(50));
-
-    if let Some(window) = app.get_webview_window("main") {
-        if let Ok(new_size) = window.outer_size() {
-            center_window_on_monitor(&window, &new_monitor, new_size);
-        }
-    }
-
-    // Persist to disk (on a background thread to avoid blocking)
-    let sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned").clone();
-    let app_clone = app.clone();
-    let _ = std::thread::spawn(move || {
-        save_window_sizes(&app_clone, &sizes);
-    });
 }
 
 /// Application entry point — called from main.rs
@@ -384,34 +317,35 @@ pub fn run() {
                 *name = Some(monitor_name(&monitor));
             }
 
-            // ── Cross-monitor resize via polling + frontend event ────────
+            // ── Cross-monitor resize via polling ─────────────────────────
             //
             // Transparent borderless windows on macOS do NOT reliably fire
-            // WindowEvent::Moved when dragged between monitors. We use a
-            // two-part approach:
+            // WindowEvent::Moved when dragged between monitors. We poll
+            // current_monitor() every 100ms.
             //
-            // 1. **Polling (100ms):** Detect monitor changes while the user
-            //    is dragging. When a change is detected, set
-            //    `pending_restore = Some(old_name)`. Do NOT resize yet.
+            // When a monitor change is detected:
+            //   - Set pending_restore = Some(old_name)
+            //   - Do NOT resize yet (user is still dragging)
             //
-            // 2. **Frontend "drag-ended" event:** The frontend emits this
-            //    event on `document` `mouseup`. When received, if
-            //    `pending_restore` is Some, perform the restore:
-            //    - Save old monitor's current window size
-            //    - Restore new monitor's stored size (or compute default)
-            //    - Resize and center
-            //    - Persist to disk
+            // When the window is still for 2 seconds AND pending_restore is Some:
+            //   - Save old monitor's current window size
+            //   - Restore new monitor's stored size (or compute default)
+            //   - Resize and center
+            //   - Persist to disk
+            //   - Clear pending_restore
             //
-            // This approach is reliable because the frontend can detect
-            // mouse-up, which is the actual end of a drag. Polling alone
-            // can't distinguish "paused during drag" from "released".
+            // The 2-second settle timeout ensures the user has actually
+            // released the mouse. During a drag the window moves continuously,
+            // so it won't be still for 2 seconds.
             // ─────────────────────────────────────────────────────────────
 
-            // Part 1: Polling — detect monitor changes during drag
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
                 // Wait a bit before starting to poll (let the window settle)
                 std::thread::sleep(std::time::Duration::from_secs(2));
+
+                let mut last_position: Option<(i32, i32)> = None;
+                let mut settled_at: Option<Instant> = None;
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -423,41 +357,92 @@ pub fn run() {
 
                     let monitor_state = app_handle.state::<MonitorState>();
 
-                    // Check for monitor change
+                    // Get current window position
+                    let current_pos = match window.outer_position() {
+                        Ok(pos) => (pos.x, pos.y),
+                        Err(_) => continue,
+                    };
+
+                    // Check if window is still moving (dragging)
+                    let is_moving = match last_position {
+                        Some(prev) => prev != current_pos,
+                        None => false,
+                    };
+                    last_position = Some(current_pos);
+
+                    if is_moving {
+                        // Window moved — reset settled timer
+                        settled_at = None;
+                    } else if settled_at.is_none() {
+                        // Window just stopped moving
+                        settled_at = Some(Instant::now());
+                    }
+
+                    // ── Step 1: Check for monitor change ──
                     if let Some(old_name) = check_monitor_changed(&window, &monitor_state) {
                         // A monitor change was detected. Mark it but do NOT
                         // resize yet — the user is still dragging.
                         let mut pending = monitor_state.pending_restore.lock().expect("lock poisoned");
                         *pending = Some(old_name);
                     }
-                }
-            });
 
-            // Part 2: Frontend event — restore when drag ends
-            let app_handle = app.handle().clone();
-            app_handle.clone().listen("drag-ended", move |_event| {
-                let app = app_handle.clone();
+                    // ── Step 2: If settled AND a monitor change was detected, restore ──
+                    if let Some(settled) = settled_at {
+                        if settled.elapsed() >= SETTLE_TIMEOUT {
+                            let old_name = {
+                                let mut pending = monitor_state.pending_restore.lock().expect("lock poisoned");
+                                pending.take()
+                            };
 
-                // Take the pending restore (if any)
-                let old_name = {
-                    let monitor_state = app.state::<MonitorState>();
-                    let mut pending = monitor_state.pending_restore.lock().expect("lock poisoned");
-                    pending.take()
-                };
+                            if let Some(old_name) = old_name {
+                                // Get current monitor (the new one)
+                                if let Ok(Some(new_monitor)) = window.current_monitor() {
+                                    let new_name = monitor_name(&new_monitor);
 
-                if let Some(old_name) = old_name {
-                    // Schedule restore after a short delay to let the window
-                    // settle after mouse-up. Use a background thread for the
-                    // delay, then dispatch to main thread for the actual work.
-                    let app_clone = app.clone();
-                    let _ = std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        let app2 = app_clone.clone();
-                        let _ = app_clone.run_on_main_thread(move || {
-                            let monitor_state = app2.state::<MonitorState>();
-                            perform_restore(&app2, &monitor_state, old_name);
-                        });
-                    });
+                                    // Get current window size (still the old monitor's size)
+                                    if let Ok(current_size) = window.outer_size() {
+                                        // Save old monitor's size
+                                        let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+                                        sizes.insert(old_name.clone(), (current_size.width, current_size.height));
+
+                                        // Get new monitor's target size (or compute default)
+                                        let (target_w, target_h) = match sizes.get(&new_name) {
+                                            Some(&s) => s,
+                                            None => {
+                                                let default = compute_default_size(&new_monitor);
+                                                sizes.insert(new_name.clone(), default);
+                                                default
+                                            }
+                                        };
+
+                                        // Persist to disk
+                                        let sizes_clone = sizes.clone();
+                                        let app = app_handle.clone();
+                                        let _ = std::thread::spawn(move || {
+                                            save_window_sizes(&app, &sizes_clone);
+                                        });
+
+                                        // Only resize if dimensions differ (avoid flicker)
+                                        if current_size.width != target_w || current_size.height != target_h {
+                                            let app2 = app_handle.clone();
+                                            let _ = app_handle.run_on_main_thread(move || {
+                                                if let Some(win) = app2.get_webview_window("main") {
+                                                    resize_window(&win, target_w, target_h);
+                                                    std::thread::sleep(std::time::Duration::from_millis(50));
+                                                    if let Ok(new_size) = win.outer_size() {
+                                                        center_window_on_monitor(&win, &new_monitor, new_size);
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Reset settled timer to avoid re-triggering
+                            settled_at = None;
+                        }
+                    }
                 }
             });
 
