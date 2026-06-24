@@ -448,48 +448,59 @@ pub fn run() {
                         };
 
                         if let Some(old_name) = old_name {
-                            // Get current monitor (the new one)
-                            if let Ok(Some(new_monitor)) = window.current_monitor() {
+                            // Dispatch restore to main thread for accurate window queries
+                            let app2 = app_handle.clone();
+                            let _ = app_handle.run_on_main_thread(move || {
+                                let win = match app2.get_webview_window("main") {
+                                    Some(w) => w,
+                                    None => return,
+                                };
+
+                                // Get current monitor (the new one)
+                                let new_monitor = match win.current_monitor() {
+                                    Ok(Some(m)) => m,
+                                    _ => return,
+                                };
                                 let new_name = monitor_name(&new_monitor);
 
                                 // Get current window size (still the old monitor's size)
-                                if let Ok(current_size) = window.outer_size() {
-                                    // Save old monitor's size
-                                    let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
-                                    sizes.insert(old_name.clone(), (current_size.width, current_size.height));
+                                let current_size = match win.outer_size() {
+                                    Ok(s) => s,
+                                    Err(_) => return,
+                                };
 
-                                    // Get new monitor's target size (or compute default)
-                                    let (target_w, target_h) = match sizes.get(&new_name) {
-                                        Some(&s) => s,
-                                        None => {
-                                            let default = compute_default_size(&new_monitor);
-                                            sizes.insert(new_name.clone(), default);
-                                            default
-                                        }
-                                    };
+                                let monitor_state = app2.state::<MonitorState>();
 
-                                    // Persist to disk
-                                    let sizes_clone = sizes.clone();
-                                    let app = app_handle.clone();
-                                    let _ = std::thread::spawn(move || {
-                                        save_window_sizes(&app, &sizes_clone);
-                                    });
+                                // Save old monitor's size
+                                let mut sizes = monitor_state.per_monitor_size.lock().expect("lock poisoned");
+                                sizes.insert(old_name.clone(), (current_size.width, current_size.height));
 
-                                    // Only resize if dimensions differ (avoid flicker)
-                                    if current_size.width != target_w || current_size.height != target_h {
-                                        let app2 = app_handle.clone();
-                                        let _ = app_handle.run_on_main_thread(move || {
-                                            if let Some(win) = app2.get_webview_window("main") {
-                                                resize_window(&win, target_w, target_h);
-                                                std::thread::sleep(std::time::Duration::from_millis(50));
-                                                if let Ok(new_size) = win.outer_size() {
-                                                    center_window_on_monitor(&win, &new_monitor, new_size);
-                                                }
-                                            }
-                                        });
+                                // Get new monitor's target size (or compute default)
+                                let (target_w, target_h) = match sizes.get(&new_name) {
+                                    Some(&s) => s,
+                                    None => {
+                                        let default = compute_default_size(&new_monitor);
+                                        sizes.insert(new_name.clone(), default);
+                                        default
+                                    }
+                                };
+
+                                // Persist to disk
+                                let sizes_clone = sizes.clone();
+                                let app3 = app2.clone();
+                                let _ = std::thread::spawn(move || {
+                                    save_window_sizes(&app3, &sizes_clone);
+                                });
+
+                                // Only resize if dimensions differ (avoid flicker)
+                                if current_size.width != target_w || current_size.height != target_h {
+                                    resize_window(&win, target_w, target_h);
+                                    std::thread::sleep(std::time::Duration::from_millis(50));
+                                    if let Ok(new_size) = win.outer_size() {
+                                        center_window_on_monitor(&win, &new_monitor, new_size);
                                     }
                                 }
-                            }
+                            });
                         }
 
                         // Reset settled timer to avoid re-triggering
